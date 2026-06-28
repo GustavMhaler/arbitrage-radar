@@ -157,11 +157,7 @@ cp SKILL.md ~/.hermes/skills/arbitrage-radar/
 
 ---
 
-## 许可
 
-MIT License — 拿去用，卖给朋友，改成自己的版本都可以。
-
----
 
 ## Star History
 
