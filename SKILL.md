@@ -3,7 +3,7 @@ name: arbitrage-radar
 description: 机会发现雷达 v2 — 用「轻资产 + 信息差 + 跨市场 + 反消费」4 原则评估副业/兼职/转型方向的轻量判断框架,输出 6 维打分的候选清单。当用户问「有什么副业可做/怎么找 alpha/想搞小生意/想换跑道/学什么能变现」时触发。仅做机会发现,不做投资建议、股票推荐、代码生成。所有候选必须明确标注合规状态(clear / 需自评合规 / 拒绝)。方法论提炼自某匿名知乎高赞作者的轻资产套利框架,不引用具体灰产/加密/翻墙案例。
 metadata:
   source: 方法论提炼自某匿名知乎高赞作者的轻资产套利框架(2022-2025)
-  version: 2.0.0
+  version: 2.1.1
   last_updated: 2026-06-28
 ---
 
@@ -104,12 +104,63 @@ metadata:
 
 如果 4 条原则都不沾边,直接告诉用户"这机会不符合本框架,继续聊也浪费时间"。
 
+### Step 2.5: 事实核查(必做,不能跳)
+
+**目的**:避免"LLM 凭模式识别脑补收益数字"。每个候选的"本金门槛"和"预期收益"必须基于真实信号,不能凭印象。
+
+**强制动作**:用 `terminal` 跑 [`scripts/web_search.py`](scripts/web_search.py),**不要**直接调 `web_search` 工具。
+
+```bash
+python scripts/web_search.py "query 1" "query 2" "query 3" --num 5
+```
+
+为什么用脚本不用 `web_search` 工具:Hermes 的 `web_search` 是后端路由型,后端没配就**静默消失**,子 agent 调会得到 `Tool not available`。脚本走 **3 层 fallback** —— Tavily HTTP API → `ddgs` Python 包 → curl DDG HTML,**任何一种环境至少有一层能跑**(详见脚本 docstring + `references/07-web-search-setup.md`)。
+
+**强制 3 条 query 覆盖 3 个轴**:
+- **价格/时薪锚点**:该类目/服务在主流平台 2026 年实际成交区间
+- **竞争密度**:做这个的人多不多,新进入者还有没有位置
+- **政策/合规**:是否涉及跨境、支付、资质等需自评项的最新政策
+
+中英文不限,**至少 1 条英文**(P3 跨市场核心信息差在英文世界)。骨架见 [`references/06-search-queries.md`](references/06-search-queries.md)。
+
+**如果脚本 3 层全失败**(连 curl DDG 都被拦),不要编造数据,告诉用户"信号源离线,本轮候选的收益数字是 LLM 基于同类案例的估计,需自行验证",并把所有"预期收益"标 `[未验证]`。
+
+**不要做的事**:
+- 不要把搜索到的具体平台名/价格数字写进 SKILL body(会触发 buyer 端 agent 调性敏感)
+- 不要因为"搜不到完美数据"就跳过这一步 —— 哪怕只搜到 1 条也有意义
+- 不要用"我觉得""一般来说"代替搜索结果
+- 不要直接调 `web_search` 工具 —— 见上方"为什么用脚本"
+
+**⚠ 关键 Pitfall — web_search 工具的「假性不可用」(2026-06-28 踩坑)**
+:本环境的 `web_search` 工具不是「开箱即用」—— 它需要后端配置才会出现。在你看到「Tool 'web_search' does not exist」或子 agent 也报「没有 web_search」时,**先别下结论说工具不存在**。完整排查路径:
+
+1. **先翻官方文档**:`https://hermes-agent.nousresearch.com/docs/zh-Hans/user-guide/features/web-search`
+   - 不要只看自己的 tool 列表 —— 默认 toolset 是按后端配置动态裁剪的,后端没配 → 工具就没显示
+2. **查后端是否配置**:`hermes config show` 看 web 段;支持 8 个后端(firecrawl/searxng/brave-free/ddgs/tavily/exa/parallel/xai)
+3. **没配的话开 ddgs(免费 DuckDuckGo 兜底,零成本)**:
+   ```
+   hermes config set web.backend ddgs
+   ```
+   配完重启 session,`web_search` 工具就会出现在 tool 列表里
+4. **派子 agent 跑 web_search**:`delegate_task(goal=..., toolsets=['web'])`,子 agent 的 toolset 继承也会包含 web_search
+   - 坑:子 agent 第一次跑也「没 web_search」?几乎一定是后端没配,不是工具链坏了
+
+**自查 checklist**(Step 2.5 跑之前 30 秒过一遍):
+- [ ] `hermes config show | grep -A 3 web` 有 web 段配置
+- [ ] 至少一个搜索后端(ddgs/searxng/brave-free 都是免费的)被设置
+- [ ] 工具列表里能看到 `web_search`(或 `web_extract`)
+- [ ] 子 agent 走 `toolsets=['web']` 能正常调通
+
+**没自查就告诉用户「web_search 不可用」是错误动作**。每次出问题时宁可多花 1 分钟 curl 文档,也不要凭印象硬说「没这个工具」 —— 用户记忆里「agent 第二次说没有 web_search」是非常负向的体验,比收益数字没核实还恶劣。
+
+完整调试记录 + 替代降级方案见 [`references/07-web-search-setup.md`](references/07-web-search-setup.md)
+
 ### Step 3: 输出 3-5 个候选(每个含 6 维打分)
 
 每个候选包含:
 1. **名字**(一句话描述)
 2. **本金门槛 / 试错成本**(具体数字)
-3. **预期年化 / 月化区间**(基于同类案例的实测)
+3. **预期年化 / 月化区间**(**必标依据类型**:`[web 验证]` / `[同类案例实测]` / `[LLM 估计]` 三选一,后两类必须附"建议用户自行核实"提示)
 4. **6 维打分**(D1~D6 + 总分)
 5. **第一周做什么**(≤ 5 步,可执行)
 6. **反模式检查**(7 条全部勾一遍)
@@ -144,17 +195,31 @@ arbitrage-radar/
 ├── SKILL.md                              ← 你正在读
 ├── agents/
 │   └── openai.yaml                       ← UI 元数据
+├── scripts/
+│   └── web_search.py                     ← Step 2.5 事实核查脚本(3 层 fallback: Tavily → ddgs → curl DDG)
 └── references/
     ├── 01-principles.md                  ← 4 条原则 + 金句
     ├── 02-opportunity-framework.md       ← 6 维打分卡详解
     ├── 03-application-patterns.md        ← 3 类应用模式
     ├── 04-red-flags.md                   ← 7 条错误模式
     ├── 05-output-template.md             ← 输出骨架
+    ├── 06-search-queries.md              ← Step 2.5 web_search 模板
+    ├── 07-web-search-setup.md            ← web_search 配置 + 降级 + 踩坑
     └── 99-source-index.md                ← 原文出处索引(只标 #编号)
 ```
 
 ## 更新日志
 
+- **v2.1.1 (2026-06-28)**: 防止 web_search 静默消失
+  - 新增 `scripts/web_search.py` — 3 层 fallback(Tavily HTTP API → ddgs Python 包 → curl DDG HTML),任何环境至少有一层能跑,不依赖 hermes web 工具链
+  - SKILL.md Step 2.5 改写:必须用 `terminal` 跑 `scripts/web_search.py`,不再直接调 `web_search` 工具
+  - `references/07-web-search-setup.md` 修订:`toolsets=['web']` 改为 `['search']` + 第 3 节加上「终极方案走脚本」 + 新增第 7 节给旧版留账
+  - 原因:用户反馈「不希望买家拿到 skill 后无法联网搜索」—— web_search 工具在 ddgs 后端下对子 agent 不稳定,必须给买家一个永远能跑的兜底
+- **v2.1.0 (2026-06-28)**: 加回 web_search 事实核查
+  - 新增 Step 2.5:3 条 query 强制搜索(价格锚点 + 竞争密度 + 政策合规),至少 1 条英文
+  - 候选的"预期收益"必标依据类型 `[web 验证]` / `[同类案例实测]` / `[LLM 估计]`
+  - 新增 `references/06-search-queries.md` 搜索骨架(中性,不参与 buyer 触发判定)
+  - 搜不到时标 `[未验证]`,不编造数据
 - **v2.0.0 (2026-06-28)**: 推倒重写
   - 移除所有灰产调性(加密/翻墙/海外华人服务/AI 色情/撸毛等)
   - 框架忠实于原作者提炼的 4 条原则,不引入"程序员技能可复用"作为第 5 条
